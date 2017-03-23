@@ -1,6 +1,7 @@
 #Travis CI configuration for KWIVER
 # See http://travis-ci.org/Kitware/kwiver/
 
+dist: trusty
 sudo: false
 
 language: cpp
