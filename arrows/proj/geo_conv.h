@@ -1,5 +1,5 @@
 /*ckwg +29
- * Copyright 2011, 2013-2014 by Kitware, Inc.
+ * Copyright 2017 by Kitware, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,29 +28,45 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef SPROKIT_PROCESSES_FLOW_FLOW_CONFIG_H
-#define SPROKIT_PROCESSES_FLOW_FLOW_CONFIG_H
-
-#include <sprokit/config.h>
-
 /**
- * \file flow-config.h
- *
- * \brief Defines for symbol visibility in the flow processes.
+ * \file
+ * \brief PROJ geo_conversion functor interface
  */
 
-#ifdef MAKE_SPROKIT_PROCESSES_FLOW_LIB
-/// Export the symbol if building the library.
-#define SPROKIT_PROCESSES_FLOW_EXPORT SPROKIT_EXPORT
-#else
-/// Import the symbol if including the library.
-#define SPROKIT_PROCESSES_FLOW_EXPORT SPROKIT_IMPORT
-#endif
+#ifndef KWIVER_ARROWS_PROJ_GEO_CONV_H_
+#define KWIVER_ARROWS_PROJ_GEO_CONV_H_
 
-/// Hide the symbol from the library interface.
-#define SPROKIT_PROCESSES_FLOW_NO_EXPORT SPROKIT_NO_EXPORT
 
-/// Mark as deprecated.
-#define SPROKIT_PROCESSES_FLOW_EXPORT_DEPRECATED SPROKIT_DEPRECATED SPROKIT_PROCESSES_FLOW_EXPORT
+#include <vital/vital_config.h>
+#include <arrows/proj/kwiver_algo_proj_export.h>
 
-#endif // SPROKIT_PROCESSES_FLOW_FLOW_CONFIG_H
+#include <vital/types/geodesy.h>
+
+#include <unordered_map>
+
+namespace kwiver {
+namespace arrows {
+namespace proj {
+
+/// PROJ implementation of geo_conversion functor
+class KWIVER_ALGO_PROJ_EXPORT geo_conversion : public vital::geo_conversion
+{
+public:
+  geo_conversion() {}
+  virtual ~geo_conversion();
+
+  virtual char const* id() const override;
+
+  /// Conversion operator
+  virtual vital::vector_2d operator()( vital::vector_2d const& point,
+                                       int from, int to ) override;
+
+private:
+  void* projection( int crs );
+
+  std::unordered_map< int, void* > m_projections;
+};
+
+} } } // end namespace
+
+#endif // KWIVER_ARROWS_PROJ_GEO_CONV_H_

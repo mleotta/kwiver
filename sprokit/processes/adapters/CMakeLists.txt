@@ -36,8 +36,12 @@ kwiver_add_library( kwiver_adapter
   )
 
 target_link_libraries( kwiver_adapter
-  PUBLIC           vital vital_vpm vital_logger
-  PRIVATE          sprokit_pipeline sprokit_tools
+  PUBLIC           vital
+                   vital_vpm
+                   vital_logger
+  PRIVATE          sprokit_pipeline
+                   sprokit_tools
+
   )
 
 kwiver_install_headers( ${public_headers}

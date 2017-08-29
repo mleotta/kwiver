@@ -1,5 +1,5 @@
 /*ckwg +29
- * Copyright 2011, 2013-2014 by Kitware, Inc.
+ * Copyright 2017 by Kitware, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,29 +28,55 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef SPROKIT_PROCESSES_EXAMPLES_EXAMPLES_CONFIG_H
-#define SPROKIT_PROCESSES_EXAMPLES_EXAMPLES_CONFIG_H
-
-#include <sprokit/config.h>
-
 /**
- * \file examples-config.h
- *
- * \brief Defines for symbol visibility in example processes.
+ * \file
+ * \brief C Interface to vital::object_track definition
  */
 
-#ifdef MAKE_SPROKIT_PROCESSES_EXAMPLES_LIB
-/// Export the symbol if building the library.
-#define SPROKIT_PROCESSES_EXAMPLES_EXPORT SPROKIT_EXPORT
-#else
-/// Import the symbol if including the library.
-#define SPROKIT_PROCESSES_EXAMPLES_EXPORT SPROKIT_IMPORT
+#ifndef VITAL_C_OBJECT_TRACK_SET_H_
+#define VITAL_C_OBJECT_TRACK_SET_H_
+
+#ifdef __cplusplus
+extern "C"
+{
 #endif
 
-/// Hide the symbol from the library interface.
-#define SPROKIT_PROCESSES_EXAMPLES_NO_EXPORT SPROKIT_NO_EXPORT
+#include "track.h"
 
-/// Mark as deprecated.
-#define SPROKIT_PROCESSES_EXAMPLES_EXPORT_DEPRECATED SPROKIT_DEPRECATED SPROKIT_PROCESSES_EXAMPLES_EXPORT
+#include <vital/bindings/c/types/detected_object.h>
 
-#endif // SPROKIT_PROCESSES_EXAMPLES_EXAMPLES_CONFIG_H
+
+////////////////////////////////////////////////////////////////////////////////
+// Track State
+
+/// Create a new track state
+/**
+ * \param frame Frame the state intersects
+ * \param d Detection instance associated with this state. May be null.
+ * \param eh Vital error handle instance
+ * \returns new instance of a track state
+ */
+VITAL_C_EXPORT
+vital_track_state_t*
+vital_object_track_state_new( int64_t frame,
+                              vital_detected_object_t *d,
+                              vital_error_handle_t *eh );
+
+
+/// Get a track state's object detection
+/**
+ * \param td Track state data instance
+ * \param eh Vital error handle instance
+ * \returns New reference to the object instance of the track state
+ */
+VITAL_C_EXPORT
+vital_detected_object_t*
+vital_object_track_state_detection( vital_track_state_t *td,
+                                    vital_error_handle_t *eh );
+
+
+#ifdef __cplusplus
+}
+#endif
+
+#endif // VITAL_C_OBJECT_TRACK_SET_H_

@@ -1,5 +1,5 @@
 /*ckwg +29
- * Copyright 2011, 2013-2014 by Kitware, Inc.
+ * Copyright 2013-2017 by Kitware, Inc.
  * All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
@@ -28,29 +28,46 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-#ifndef SPROKIT_PROCESSES_CLUSTERS_CLUSTERS_CONFIG_H
-#define SPROKIT_PROCESSES_CLUSTERS_CLUSTERS_CONFIG_H
-
-#include <sprokit/config.h>
-
 /**
- * \file clusters-config.h
- *
- * \brief Defines for symbol visibility in cluster processes.
+ * \file
+ * \brief Implementation of \link kwiver::vital::track_set track_set \endlink
+ *        member functions
  */
 
-#ifdef MAKE_SPROKIT_PROCESSES_CLUSTERS_LIB
-/// Export the symbol if building the library.
-#define SPROKIT_PROCESSES_CLUSTERS_EXPORT SPROKIT_EXPORT
-#else
-/// Import the symbol if including the library.
-#define SPROKIT_PROCESSES_CLUSTERS_EXPORT SPROKIT_IMPORT
-#endif
+#include "object_track_set.h"
 
-/// Hide the symbol from the library interface.
-#define SPROKIT_PROCESSES_CLUSTERS_NO_EXPORT SPROKIT_NO_EXPORT
+#include <limits>
 
-/// Mark as deprecated.
-#define SPROKIT_PROCESSES_CLUSTERS_EXPORT_DEPRECATED SPROKIT_DEPRECATED SPROKIT_PROCESSES_CLUSTERS_EXPORT
+#include <vital/vital_foreach.h>
 
-#endif // SPROKIT_PROCESSES_CLUSTERS_CLUSTERS_CONFIG_H
+namespace kwiver {
+namespace vital {
+
+typedef std::unique_ptr<track_set_implementation> tsi_uptr;
+
+
+/// Default Constructor
+object_track_set
+::object_track_set()
+  : track_set(tsi_uptr(new simple_track_set_implementation))
+{
+}
+
+
+/// Constructor specifying the implementation
+object_track_set
+::object_track_set(std::unique_ptr<track_set_implementation> impl)
+  : track_set(std::move(impl))
+{
+}
+
+
+/// Constructor from a vector of tracks
+object_track_set
+::object_track_set(std::vector< track_sptr > const& tracks)
+  : track_set(tsi_uptr(new simple_track_set_implementation(tracks)))
+{
+}
+
+
+} } // end namespace vital
