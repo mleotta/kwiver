@@ -1,4 +1,4 @@
-# Optional find and confgure VXL dependency
+# Optional find and confgure FFmpeg dependency
 
 option( KWIVER_ENABLE_FFMPEG
   "Enable FFMPEG dependent code and plugins (Arrows)"
