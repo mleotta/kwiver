@@ -2,7 +2,7 @@
 
 option( KWIVER_ENABLE_FFMPEG
   "Enable FFMPEG dependent code and plugins (Arrows)"
-  ${fletch_ENABLED_FFMPEG}
+  ${fletch_ENABLED_FFmpeg}
   )
 
 if( KWIVER_ENABLE_FFMPEG )
