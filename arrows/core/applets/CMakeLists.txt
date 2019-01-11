@@ -5,10 +5,12 @@
 set( sources
   register_applets.cxx
 
+  estimate_homography.cxx
   render_mesh.cxx
   )
 
 set( headers
+  estimate_homography.h
   render_mesh.h
   )
 

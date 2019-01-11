@@ -1,0 +1,440 @@
+/*ckwg +29
+ * Copyright 2019 by Kitware, Inc.
+ * All rights reserved.
+ *
+ * Redistribution and use in source and binary forms, with or without
+ * modification, are permitted provided that the following conditions are met:
+ *
+ *  * Redistributions of source code must retain the above copyright notice,
+ *    this list of conditions and the following disclaimer.
+ *
+ *  * Redistributions in binary form must reproduce the above copyright notice,
+ *    this list of conditions and the following disclaimer in the documentation
+ *    and/or other materials provided with the distribution.
+ *
+ *  * Neither name of Kitware, Inc. nor the names of any contributors may be used
+ *    to endorse or promote products derived from this software without specific
+ *    prior written permission.
+ *
+ * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+ * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+ * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
+ * ARE DISCLAIMED. IN NO EVENT SHALL THE AUTHORS OR CONTRIBUTORS BE LIABLE FOR
+ * ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+ * DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+ * SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+ * CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+ * OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+ * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ */
+
+/// \file
+///
+/// This tool estimates a homography to align two images
+
+#include "estimate_homography.h"
+
+#include <fstream>
+#include <string>
+#include <vector>
+
+#include <vital/config/config_block.h>
+#include <vital/config/config_block_io.h>
+#include <vital/logger/logger.h>
+
+#include <vital/types/image_container.h>
+#include <vital/exceptions.h>
+#include <vital/plugin_loader/plugin_manager.h>
+#include <vital/version.h>
+#include <vital/vital_types.h>
+
+#include <vital/algo/image_io.h>
+#include <vital/algo/convert_image.h>
+#include <vital/algo/detect_features.h>
+#include <vital/algo/estimate_homography.h>
+#include <vital/algo/extract_descriptors.h>
+#include <vital/algo/match_features.h>
+#include <vital/util/get_paths.h>
+
+#include <kwiversys/SystemTools.hxx>
+#include <kwiversys/CommandLineArguments.hxx>
+
+namespace kwiver {
+namespace arrows {
+namespace core {
+
+namespace {
+
+// Global options
+bool        opt_help(false);
+std::string opt_config;
+std::string opt_out_config;
+double      opt_inlier_scale(2.0);
+std::string opt_mask_image;
+std::string opt_mask2_image;
+
+typedef kwiversys::CommandLineArguments argT;
+
+static kwiver::vital::logger_handle_t main_logger( kwiver::vital::get_logger( "estimate_homography" ) );
+
+// Shortcut macro for arbitrarily acting over the tool's algorithm elements.
+// ``call`` macro must be two take two arguments: (algo_type, algo_name)
+#define tool_algos(call)                                \
+  call(detect_features,     feature_detector);          \
+  call(extract_descriptors, descriptor_extractor);      \
+  call(match_features,      feature_matcher);           \
+  call(estimate_homography, homog_estimator);           \
+  call(image_io,            image_reader);              \
+  call(convert_image,       image_converter)
+
+
+// ----------------------------------------------------------------------------
+static kwiver::vital::config_block_sptr default_config()
+{
+  kwiver::vital::config_block_sptr config = kwiver::vital::config_block::empty_config("homography_estimation_tool");
+
+  // Default algorithm types
+  config->set_value("image_reader:type", "vxl");
+
+  config->set_value("image_converter:type", "bypass");
+
+  config->set_value("feature_detector:type", "ocv_SURF");
+  config->set_value("feature_detector:ocv_SURF:hessian_threshold", 250);
+
+  config->set_value("descriptor_extractor:type", "ocv_SURF");
+  config->set_value("descriptor_extractor:ocv_SURF:hessian_threshold", 250);
+
+  config->set_value("feature_matcher:type", "ocv_flann_based");
+
+  config->set_value("homog_estimator:type", "vxl");
+
+  // expand algo config from defaults above if any
+#define get_default(type, name) \
+  kwiver::vital::algo::type::get_nested_algo_configuration( #name, config, kwiver::vital::algo::type##_sptr() );
+
+  tool_algos(get_default);
+
+#undef get_default
+
+  return config;
+}
+
+
+// ----------------------------------------------------------------------------
+static bool check_config(kwiver::vital::config_block_sptr config)
+{
+  bool config_valid = true;
+
+#define MAPTK_CONFIG_FAIL(msg)                          \
+  LOG_WARN(main_logger, "Config Check Fail: " << msg);  \
+  config_valid = false
+
+#define check_algo_config(type, name)                             \
+  if (! kwiver::vital::algo::type::check_nested_algo_configuration( #name, config )) \
+  {                                                                     \
+    MAPTK_CONFIG_FAIL("Configuration for algorithm " << #name << " was invalid."); \
+  }
+
+  tool_algos(check_algo_config);
+
+#undef check_algo_config
+
+#undef MAPTK_CONFIG_FAIL
+
+  return config_valid;
+}
+
+}
+
+// ----------------------------------------------------------------------------
+void
+estimate_homography::
+usage( std::ostream& outstream ) const
+{
+  outstream << "This tool takes two images and estimates a homography to align them."
+            << "\n"
+            << "Usage: kwiver " << applet_name() << " [opts] img1 img2 output_file\n"
+            << "\n"
+            << "Options are:\n"
+            << "  -h | --help            displays usage information\n"
+            << "  --config | -c  FILE    Configuration for tool\n"
+            << "  --output-config  FILE  Dump configuration to file\n"
+            << "positional arguments:\n"
+            << "    img1 img2   - two in-frame-order image files.\n"
+            << "    output_file - file to receive generated homography transformation between input frames.\n"
+            << "                  this ends up including two homographies: an identity associated to\n"
+            << "                  the first frame and then an actual homography describing the\n"
+            << "                  transformation to the second frame.\n";
+}
+
+
+// ----------------------------------------------------------------------------
+/** Main entry. */
+int
+estimate_homography::
+run( const std::vector<std::string>& argv )
+{
+  kwiversys::CommandLineArguments arg;
+
+  arg.Initialize( argv );
+  arg.StoreUnusedArguments( true );
+
+
+  arg.AddArgument( "--help",
+                   argT::NO_ARGUMENT, &opt_help, "Display usage information" );
+
+  arg.AddArgument( "--config",
+                   argT::SPACE_ARGUMENT, &opt_config,
+                   "Optional custom configuration file for the tool. "
+                   "Defaults are set such that this is not required.");
+  arg.AddArgument( "-c",
+                   argT::SPACE_ARGUMENT, &opt_config,
+                   "Optional custom configuration file for the tool. "
+                   "Defaults are set such that this is not required.");
+
+  arg.AddArgument( "--output-config",
+                   argT::SPACE_ARGUMENT, &opt_out_config,
+                   "Output a configuration file with default values. This may "
+                   "be seeded with a configuration file from -c/--config.");
+  arg.AddArgument( "-o",
+                   argT::SPACE_ARGUMENT, &opt_out_config,
+                   "Output a configuration file with default values. This may "
+                   "be seeded with a configuration file from -c/--config.");
+
+  arg.AddArgument( "--inlier-scale",
+                   argT::SPACE_ARGUMENT, &opt_inlier_scale,
+                   "Error distance tolerated for matches to be considered "
+                   "inliers during homography estimation.");
+  arg.AddArgument( "-i",
+                   argT::SPACE_ARGUMENT, &opt_inlier_scale,
+                   "Error distance tolerated for matches to be considered "
+                   "inliers during homography estimation.");
+
+  arg.AddArgument( "--mask_image",
+                   argT::SPACE_ARGUMENT, &opt_mask_image,
+                   "Optional boolean mask image where positive values "
+                   "indicate where features should be detected. This image "
+                   "*must* be the same size as the input images.");
+  arg.AddArgument( "-m",
+                   argT::SPACE_ARGUMENT, &opt_mask_image,
+                   "Optional boolean mask image where positive values "
+                   "indicate where features should be detected. This image "
+                   "*must* be the same size as the input images.");
+
+  arg.AddArgument( "--mask-image2",
+                   argT::SPACE_ARGUMENT, &opt_mask2_image,
+                   "Optional boolean mask image for the second input image. "
+                   "This mask image should be provided in the same format as "
+                   "described previously. Providing this mask causes the "
+                   "\"--mask-image\" mask to only apply to the first image. "
+                   "This mask is only considered if \"--mask-image\" is "
+                   "provided.");
+  arg.AddArgument( "-n",
+                   argT::SPACE_ARGUMENT, &opt_mask2_image,
+                   "Optional boolean mask image for the second input image. "
+                   "This mask image should be provided in the same format as "
+                   "described previously. Providing this mask causes the "
+                   "\"--mask-image\" mask to only apply to the first image. "
+                   "This mask is only considered if \"--mask-image\" is "
+                   "provided.");
+
+  if ( ! arg.Parse() )
+  {
+    std::cerr << "Problem parsing arguments" << std::endl;
+    exit( 0 );
+  }
+
+  // Process help before anything else
+  if( opt_help )
+  {
+    usage( std::cerr );
+    return EXIT_SUCCESS;
+  }
+
+  // only handle positional arguments if the algorithms are to be run
+  // if only writing out a config, we don't need the image files
+  std::vector<std::string> input_img_files;
+  std::string homog_output_path;
+  if ( opt_out_config.empty() )
+  {
+    // Get positional file arguments
+    int pos_argc;
+    char** pos_argv;
+
+    arg.GetUnusedArguments( &pos_argc, &pos_argv );
+
+    if ( 4 != pos_argc )
+    {
+      std::cerr << "Insufficient number of files specified after options.\n\n";
+      usage( std::cerr);
+      return EXIT_FAILURE;
+    }
+
+    // Note: pos_argv[0] is the executable name
+    input_img_files.push_back( pos_argv[1] );
+    input_img_files.push_back( pos_argv[2] );
+
+    homog_output_path = pos_argv[3];
+  }
+
+  // register the algorithm implementations
+  std::string rel_plugin_path = kwiver::vital::get_executable_path() + "/../lib/modules";
+  kwiver::vital::plugin_manager::instance().add_search_path(rel_plugin_path);
+  kwiver::vital::plugin_manager::instance().load_all_plugins();
+
+  // Set config to algo chain
+  // Get config from algo chain after set
+  // Check config validity, store result
+  //
+  // If -o/--output-config given, output config result and notify of current (in)validity
+  // Else error if provided config not valid.
+
+  //
+  // Setup algorithms and configuration
+  //
+
+  namespace algo = kwiver::vital::algo;
+
+  kwiver::vital::config_block_sptr config = default_config();
+
+  // Define algorithm variables.
+#define define_algo(type, name)  kwiver::vital::algo::type##_sptr name
+
+  tool_algos(define_algo);
+
+#undef define_algo
+
+  // If -c/--config given, read in confg file, merge onto default just generated
+  if( ! opt_config.empty() )
+  {
+    const std::string prefix = kwiver::vital::get_executable_path() + "/..";
+    config->merge_config(kwiver::vital::read_config_file(opt_config, "kwiver",
+                                                         KWIVER_VERSION, prefix));
+  }
+
+  // Set current configuration to algorithms and extract refined configuration.
+#define sa(type, name)                                                       \
+  kwiver::vital::algo::type::set_nested_algo_configuration( #name, config, name ); \
+  kwiver::vital::algo::type::get_nested_algo_configuration( #name, config, name )
+
+  tool_algos(sa);
+
+#undef sa
+
+  // Check that current configuration is valid.
+  bool valid_config = check_config(config);
+
+  if ( ! opt_out_config.empty() )
+  {
+    write_config_file(config, opt_out_config );
+    if(valid_config)
+    {
+      LOG_INFO(main_logger, "Configuration file contained valid parameters and may be used for running");
+    }
+    else
+    {
+      LOG_WARN(main_logger, "Configuration deemed not valid.");
+    }
+    return EXIT_SUCCESS;
+  }
+  else if(!valid_config)
+  {
+    LOG_ERROR(main_logger, "Configuration not valid.");
+    return EXIT_FAILURE;
+  }
+
+  LOG_INFO(main_logger, "Loading images...");
+
+  kwiver::vital::image_container_sptr i1_image, i2_image;
+  try
+  {
+    i1_image = image_converter->convert(image_reader->load(input_img_files[0]));
+    i2_image = image_converter->convert(image_reader->load(input_img_files[1]));
+  }
+  catch (kwiver::vital::path_not_exists const &e)
+  {
+    LOG_ERROR(main_logger, e.what());
+    return EXIT_FAILURE;
+  }
+  catch (kwiver::vital::path_not_a_file const &e)
+  {
+    LOG_ERROR(main_logger, e.what());
+    return EXIT_FAILURE;
+  }
+
+  // load and convert mask images if they were given
+  LOG_DEBUG(main_logger, "Before mask load");
+  kwiver::vital::image_container_sptr mask, mask2;
+  if( ! opt_mask_image.empty() )
+  {
+    mask = image_converter->convert( image_reader->load( opt_mask_image ) );
+
+    if( ! opt_mask2_image.empty() )
+    {
+      mask2 = image_converter->convert( image_reader->load( opt_mask2_image ) );
+    }
+    else
+    {
+      mask2 = mask;
+    }
+  }
+
+  // Make sure we can open for writting the given homography file path
+  std::ofstream homog_output_stream( homog_output_path.c_str() );
+  if (!homog_output_stream)
+  {
+    LOG_ERROR(main_logger, "Could not open output homog file: " << homog_output_path );
+    return EXIT_FAILURE;
+  }
+
+  LOG_INFO(main_logger, "Generating features over input frames...");
+  // if no masks were loaded, the value of each mask at this point will be the
+  // same as the default value (uninitialized sptr)
+  kwiver::vital::feature_set_sptr i1_features = feature_detector->detect(i1_image, mask),
+                          i2_features = feature_detector->detect(i2_image, mask2);
+  LOG_INFO(main_logger, "Generating descriptors over input frames...");
+  kwiver::vital::descriptor_set_sptr i1_descriptors = descriptor_extractor->extract(i1_image, i1_features),
+                             i2_descriptors = descriptor_extractor->extract(i2_image, i2_features);
+  LOG_INFO(main_logger, "-- Img1 features / descriptors: " << i1_descriptors->size());
+  LOG_INFO(main_logger, "-- Img2 features / descriptors: " << i2_descriptors->size());
+
+  LOG_INFO(main_logger, "Matching features...");
+  // matching from frame 2 to 1 explicitly. see below.
+  kwiver::vital::match_set_sptr matches = feature_matcher->match(i2_features, i2_descriptors,
+                                                         i1_features, i1_descriptors);
+  LOG_INFO(main_logger, "-- Number of matches: " << matches->size());
+
+  // Because we computed matches from frames 2 to 1, this homography describes
+  // the transformation from image2 space to image1 space, which is what
+  // warping tools usually want.
+  LOG_INFO(main_logger, "Estimating homography...");
+  std::vector<bool> inliers;
+  kwiver::vital::homography_sptr homog = homog_estimator->estimate(i2_features, i1_features,
+                                                           matches, inliers, opt_inlier_scale);
+  if( ! homog )
+  {
+    LOG_ERROR( main_logger, "Failed to estimate valid homography! NULL returned." );
+    return EXIT_FAILURE;
+  }
+
+  // Reporting inlier count
+  size_t inlier_count = 0;
+  for(bool b : inliers)
+  {
+    if (b)
+    {
+      ++inlier_count;
+    }
+  }
+  LOG_INFO(main_logger, "-- Inliers: " << inlier_count << " / " << inliers.size());
+
+  LOG_INFO(main_logger, "Writing homography file...");
+  homog_output_stream << kwiver::vital::homography_<double>() << std::endl
+                      << *homog << std::endl;
+  homog_output_stream.close();
+  LOG_INFO(main_logger, "-- '" << homog_output_path << "' finished writing");
+
+  return EXIT_SUCCESS;
+}
+
+} } } // end namespace
