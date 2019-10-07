@@ -1554,8 +1554,7 @@ initialize_cameras_landmarks_keyframe::priv
     lms[lm.first] = std::make_shared<landmark_d>(lm_xformed);
   }
 
-  auto pcams = cams->map_of_<camera_perspective>();
-  if (!majority_upright(*pcams))
+  if (!majority_upright(cams->map_of_<camera_perspective>()))
   {
     auto nr_cams_perspec =
       std::make_shared<simple_camera_perspective_map>(cams->T_cameras());
