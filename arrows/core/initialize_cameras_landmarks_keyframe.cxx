@@ -1554,22 +1554,9 @@ initialize_cameras_landmarks_keyframe::priv
     lms[lm.first] = std::make_shared<landmark_d>(lm_xformed);
   }
 
-  int net_cams_pointing_up = 0;
-  for (auto &cam : cams->T_cameras())
-  {
-    auto Rmatrix = cam.second->rotation().matrix();
-    auto Y_axis = Rmatrix.row(1);
-    if (Y_axis(2) < 0)
-    {
-      ++net_cams_pointing_up;
-    }
-    else
-    {
-      --net_cams_pointing_up;
-    }
-  }
-
-  if (net_cams_pointing_up < 0)
+  auto pcams = std::make_shared<camera_perspective_map>();
+  pcams->set_from_base_camera_map(cams->cameras());
+  if (!majority_upright(*pcams))
   {
     auto nr_cams_perspec =
       std::make_shared<simple_camera_perspective_map>(cams->T_cameras());
