@@ -40,6 +40,9 @@
 #include <vital/plugin_loader/plugin_manager_internal.h>
 #include <vital/util/get_paths.h>
 
+#include <kwiversys/SystemTools.hxx>
+#include <kwiversys/DynamicLoader.hxx>
+
 #include <cstdlib>
 #include <iostream>
 #include <fstream>
@@ -48,6 +51,9 @@
 
 using applet_factory = kwiver::vital::implementation_factory_by_name< kwiver::tools::kwiver_applet >;
 using applet_context_t = std::shared_ptr< kwiver::tools::applet_context >;
+
+typedef kwiversys::SystemTools ST;
+typedef kwiversys::DynamicLoader DL;
 
 // ============================================================================
 /**
@@ -180,6 +186,22 @@ void help_applet( const command_line_parser& options,
 // ============================================================================
 int main(int argc, char *argv[])
 {
+
+  const std::string exec_path = kwiver::vital::get_executable_path();
+  auto const plugin_path = exec_path + "/../lib/kwiver/plugins";
+
+  // Prefer the log4cplus logger if available and if no logger is specified
+  std::string logger;
+  if (!ST::GetEnv("VITAL_LOGGER_FACTORY", logger))
+  {
+    auto const logger_path = ST::CollapseFullPath(
+      plugin_path + "/logger/vital_log4cplus_logger");
+    if (ST::FileExists(logger_path + DL::LibExtension()))
+    {
+      ST::PutEnv("VITAL_LOGGER_FACTORY=" + logger_path);
+    }
+  }
+
   //
   // Global shared context
   // Allocated on the stack so it will automatically clean up
@@ -188,9 +210,7 @@ int main(int argc, char *argv[])
 
   kwiver::vital::plugin_manager_internal& vpm = kwiver::vital::plugin_manager_internal::instance();
 
-  const std::string exec_path = kwiver::vital::get_executable_path();
-  vpm.add_search_path(exec_path + "/../lib/kwiver/plugins");
-
+  vpm.add_search_path(plugin_path);
   vpm.load_all_plugins();
 
   // initialize the global context
