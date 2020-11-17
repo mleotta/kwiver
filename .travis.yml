@@ -1,7 +1,7 @@
 #Travis CI configuration for KWIVER
 # See http://travis-ci.org/Kitware/kwiver/
 
-dist: bionic
+dist: focal
 language: cpp
 
 matrix:
